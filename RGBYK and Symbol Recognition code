@@ -1,0 +1,268 @@
+#include <stdio.h>
+
+#include "opencv_aee.hpp"
+#include "main.hpp"     // You can use this file for declaring defined values and functions
+#include "pi2c.h"
+
+Pi2c car(0x04); // Configure the I2C interface to the Car as a global variable
+
+long Xpk;
+long integralGain;
+long lastError = 0;
+double Kp = 60;
+double Ki = 0.2;
+double Kd = 5;
+
+long pidControl(long setpoint, long Xpk)
+{
+    long error = setpoint - Xpk;
+    long proportionalGain = Kp * error;
+
+    for ( int i = 0; i <= 5; i++)
+    {
+        integralGain += Ki * error;
+    }
+
+    long derivativeGain = Kd * (error - lastError);
+    long u = proportionalGain + integralGain + derivativeGain;
+    lastError = error;
+    return u;
+}
+
+void sendMechanicalData(int leftMotor, int rightMotor, int steeringAngle)
+{
+    char data[6];
+    data[0] = (leftMotor >> 8) & 0xFF;
+    waitKey(10);
+    data[1] = leftMotor & 0xFF;
+    waitKey(10);
+    data[2] = (rightMotor >> 8) & 0xFF;
+    waitKey(10);
+    data[3] = rightMotor & 0xFF;
+    waitKey(10);
+    data[4] = (steeringAngle >> 8) & 0xFF;
+    waitKey(10);
+    data[5] = steeringAngle & 0xFF;
+    waitKey(10);
+    car.i2cWrite(data, 6);
+}
+
+void setup(void)
+{
+    setupCamera(320, 240);  // Enable the camera for OpenCV
+}
+
+int main( int argc, char** argv )
+{
+    setup();    // Call a setup function to prepare IO and devices
+
+    Mat star = imread("star.png", IMREAD_COLOR);
+    Mat umbrella = imread("umbrella.png", IMREAD_COLOR);
+    Mat circle = imread("circle.png", IMREAD_COLOR);
+    Mat triangle = imread("triangle.png", IMREAD_COLOR);
+
+    Scalar lower_purple(110, 50, 50);
+    Scalar upper_purple(130, 255, 255);
+
+    int border_width = 25;
+
+    int command;
+
+    Mat column[9];
+
+    //cv::namedWindow("Photo");   // Create a GUI window called photo
+
+    while(1)    // Main loop to perform image processing
+    {
+        Mat frame, image_HSV, image_BLACK, image_BLUE, image_GREEN, image_YELLOW, image_RED, eroded, dilated, edges;
+        Mat mask;
+
+        while(frame.empty())
+            frame = captureFrame(); // Capture a frame from the camera and store in a new matrix variable
+
+        cvtColor(frame, image_HSV, COLOR_BGR2HSV);
+        inRange(image_HSV, lower_purple, upper_purple, mask);
+
+        long x, y;
+
+        vector<vector<Point>> contours;
+        findContours(mask, contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
+
+        for (const auto& contour : contours)
+        {
+            // Find the bounding rectangle of the contour
+            Rect bounding_rect = boundingRect(contour);
+
+            // Check if the bounding rectangle matches the size and shape of the symbols
+            if (bounding_rect.width == 350 + 2 * border_width
+                    && bounding_rect.height == 350 + 2 * border_width
+                    && contourArea(contour) > 1000)
+            {
+                // Check if the contour is a star
+                Mat roi = frame(bounding_rect);
+                Mat star_mask = Mat::zeros(roi.size(), CV_8UC1);
+                drawContours(star_mask, vector<vector<Point>> {contour}, 0, Scalar(255), FILLED);
+                Mat star_roi = roi & star_mask;
+
+                // Check if the contour is a circle
+                Mat cir_mask = Mat::zeros(roi.size(), CV_8UC1);
+                drawContours(cir_mask, vector<vector<Point>> {contour}, 0, Scalar(255), FILLED);
+                Mat cir_roi = roi & cir_mask;
+
+                // Check if the contour is an umbrella
+                Mat umb_mask = Mat::zeros(roi.size(), CV_8UC1);
+                drawContours(umb_mask, vector<vector<Point>> {contour}, 0, Scalar(255), FILLED);
+                Mat umb_roi = roi & umb_mask;
+
+                // Check if the contour is a triangle
+                Mat tri_mask = Mat::zeros(roi.size(), CV_8UC1);
+                drawContours(tri_mask, vector<vector<Point>> {contour}, 0, Scalar(255), FILLED);
+                Mat tri_roi = roi & tri_mask;
+                if (norm(star_roi - star) < 10000)
+                {
+                    cout << "Star found!" << endl;
+                    command = 1;
+                }
+                else if (norm(cir_roi - star) < 10000)
+                {
+                    cout << "Circle found!" << endl;
+                    command = 2;
+                }
+                else if (norm(umb_roi - star) < 10000)
+                {
+                    cout << "Umbrella found!" << endl;
+                    command = 3;
+                }
+                else if (norm(tri_roi - star) < 10000)
+                {
+                    cout << "Triangle found!" << endl;
+                    command = 4;
+                }
+            }
+        }
+
+                imshow("Symbol Detection", frame);
+
+                Mat image_COLOUR = 0;
+
+       switch (command)
+       {
+           default: //BLACK
+                cvtColor(frame, image_HSV, COLOR_BGR2HSV); // Convert the image to HSV
+                inRange(image_HSV, Scalar(0, 0, 0), Scalar(360, 255, 70), image_BLACK);
+                image_COLOUR = image_BLACK;
+            break;
+
+            case '1': //GREEN
+                cvtColor(frame, image_HSV, COLOR_BGR2HSV); // Convert the image to HSV
+                inRange(image_HSV, Scalar(40, 170, 57), Scalar(70, 255, 255), image_GREEN);
+                image_COLOUR = image_GREEN;
+            break;
+
+            case '2': //RED
+                cvtColor(frame, image_HSV, COLOR_BGR2HSV); // Convert the image to HSV
+                inRange(image_HSV, Scalar(0, 50, 70), Scalar(30, 255, 255), image_RED);
+                image_COLOUR = image_RED;
+            break;
+
+            case '3': //YELLOW
+                cvtColor(frame, image_HSV, COLOR_BGR2HSV); // Convert the image to HSV
+                inRange(image_HSV, Scalar(25, 50, 70), Scalar(35, 255, 255), image_YELLOW);
+                image_COLOUR = image_YELLOW;
+            break;
+
+            case '4': //BLUE
+                cvtColor(frame, image_HSV, COLOR_BGR2HSV); // Convert the image to HSV
+                inRange(image_HSV, Scalar(100, 132, 20), Scalar(250, 255, 255), image_BLUE);
+                image_COLOUR = image_BLUE;
+            break;
+        }
+
+                Mat spotFilter = cv::getStructuringElement(MORPH_ELLIPSE, Size(5, 5));
+                cv::erode(image_COLOUR, eroded, spotFilter);
+
+                image_COLOUR = 0;
+
+                Mat maskMorph = cv::getStructuringElement(MORPH_ELLIPSE, Size(10, 10));
+                cv::dilate(eroded, dilated, maskMorph);
+
+                command = 0;
+
+                int col_width = frame.cols / 9;
+
+                for (int i = 0; i < 9; i++)
+                {
+                    cv::Rect roi(i * col_width, 0, col_width, frame.rows);
+                    column[i] = dilated(roi);
+                }
+
+                int l4 = 0; // Create a integer to store the result
+                l4 = countNonZero(column[0]); // Count the number of non-zero pixels
+                int l3 = 0; // Create a integer to store the result
+                l3 = countNonZero(column[1]); // Count the number of non-zero pixels
+                int l2 = 0; // Create a integer to store the result
+                l2 = countNonZero(column[2]); // Count the number of non-zero pixels
+                int l1 = 0; // Create a integer to store the result
+                l1 = countNonZero(column[3]); // Count the number of non-zero pixels
+                int c = 0; // Create a integer to store the result
+                c = countNonZero(column[4]); // Count the number of non-zero pixels
+                int r1 = 0; // Create a integer to store the result
+                r1 = countNonZero(column[5]); // Count the number of non-zero pixels
+                int r2 = 0; // Create a integer to store the result
+                r2 = countNonZero(column[6]); // Count the number of non-zero pixels
+                int r3 = 0; // Create a integer to store the result
+                r3 = countNonZero(column[7]); // Count the number of non-zero pixels
+                int r4 = 0; // Create a integer to store the result
+                r4 = countNonZero(column[8]); // Count the number of non-zero pixels
+
+                Xpk = ((l4 * -5) + (l3 * -3.75) + (l2 * -2.5) + (l1 * -1.25) + (r1 * 1.25) + (r2 * 2.5) + (r3 * 3.75) + (r4 * 5)) / (l4 + l3 + l2 + l1 + c + r1 + r2 + r3 + r4);
+
+                int servoAngle = 90 * (pidControl(0, Xpk));
+                int motorSpeed = 100 + (0.1 * (pidControl(0, Xpk)));
+
+                if (servoAngle > 150)
+                {
+                    servoAngle = 150;
+                }
+
+                if (servoAngle < 30)
+                {
+                    servoAngle = 30;
+                }
+                if (motorSpeed > 255)
+                {
+                    motorSpeed = 255;
+                }
+
+                if (motorSpeed < -255)
+                {
+                    motorSpeed = -255;
+                }
+
+                printf("servoAngle = %d \nmotorSpeed = %d", servoAngle, motorSpeed);
+                //waitKey(150);
+                sendMechanicalData(motorSpeed, motorSpeed, servoAngle);
+
+                //cv::imshow("Photo", frame); //Display the image in the window
+                cv::imshow("Column 1", column[0]);  //Display the image in the window
+                cv::imshow("Column 2", column[1]);  //Display the image in the window
+                cv::imshow("Column 3", column[2]);  //Display the image in the window
+                cv::imshow("Column 4", column[3]);  //Display the image in the window
+                cv::imshow("Column 5", column[4]);  //Display the image in the window
+                cv::imshow("Column 6", column[5]);  //Display the image in the window
+                cv::imshow("Column 7", column[6]);  //Display the image in the window
+                cv::imshow("Column 8", column[7]);  //Display the image in the window
+                cv::imshow("Column 9", column[8]);  //Display the image in the window*
+                cv::imshow("Photo", dilated); //Display the image in the window
+
+                int key = cv::waitKey(1);   // Wait 1ms for a keypress (required to update windows)
+
+                key = (key==255) ? -1 : key;    // Check if the ESC key has been pressed
+                if (key == 27)
+                    break;
+            }
+
+            closeCV();  // Disable the camera and close any windows
+
+            return 0;
+        }
